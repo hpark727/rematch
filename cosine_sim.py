@@ -97,3 +97,94 @@ def l2_normalize(A, axis=1, eps=1e-10):
 
 norm = l2_normalize(vector_embeddings, axis=1)
 
+print('norm shape:', norm.shape)
+
+def cos(A, B):
+    return cosine_similarity(A, B)
+       
+
+def get_row(tid, traj_map):
+    return traj_map[tid]
+
+EPS = 1e-12
+# compute adjacency cosine similarity sequences
+def trajectory_adj_cos_sequences(trajectory_map, embeddings, pad_value=np.nan, min_steps=2):
+    """
+    Returns a wide DataFrame:
+      - rows = trajectories
+      - columns = adj_cos_0, adj_cos_1, ... (padded with NaN)
+    """
+    Xn = embeddings / np.clip(np.linalg.norm(embeddings, axis=1, keepdims=True), EPS, None)
+    n_rows = embeddings.shape[0]
+
+    # compute sequences
+    seqs = {}
+    max_len = 0
+    for tid, idxs in trajectory_map.items():
+        idxs = np.asarray(idxs, dtype=int)
+        if len(idxs) < min_steps:
+            continue
+        if np.any((idxs < 0) | (idxs >= n_rows)):
+            raise IndexError(f"Trajectory {tid} has out-of-range indices.")
+        V = Xn[idxs]
+        adj = np.sum(V[:-1] * V[1:], axis=1)  # length T-1
+        seqs[tid] = adj
+        max_len = max(max_len, len(adj))
+
+    # pad to same length
+    data = {}
+    for tid, adj in seqs.items():
+        padded = np.full((max_len,), pad_value, dtype=float)
+        padded[:len(adj)] = adj
+        data[tid] = padded
+
+    df_seq = pd.DataFrame.from_dict(data, orient="index")
+    df_seq.index.name = "trajectory_id"
+    df_seq.columns = [f"adj_cos_{i}" for i in range(max_len)]
+    return df_seq
+
+# histogram plotting function
+def plot_adj_cos_histogram(seq_df, agent_type, bins=50):
+    adj_cos_values = dboed_df.values.flatten()
+    adj_cos_values = adj_cos_values[~np.isnan(adj_cos_values)]
+
+    plt.figure(figsize=(8, 5))
+    sns.histplot(adj_cos_values, bins=bins, kde=True)
+    plt.title(f'Adjacency Cosine Similarity Histogram for {agent_type}')
+    plt.xlabel('Adjacency Cosine Similarity')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+    plt.show()
+
+# t-SNE plotting function
+def plot_adj_cos_tsne(seq_df, agent_type, perplexity, n_components=2, random_state=42):
+    adj_cos_values = seq_df.values
+    adj_cos_values = np.nan_to_num(adj_cos_values, nan=0.0)
+
+    tsne = TSNE(n_components=n_components, perplexity=perplexity, random_state=random_state)
+    tsne_results = tsne.fit_transform(adj_cos_values)
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(tsne_results[:, 0], tsne_results[:, 1], alpha=0.6)
+    plt.title(f't-SNE of Adjacency Cosine Similarities for {agent_type}')
+    plt.xlabel('t-SNE Dimension 1')
+    plt.ylabel('t-SNE Dimension 2')
+    plt.grid(True)
+    plt.show()
+
+
+dboed_df = trajectory_adj_cos_sequences(traj_map_dboed, vector_embeddings, pad_value=np.nan, min_steps=2)
+boed_df = trajectory_adj_cos_sequences(traj_map_boed,   vector_embeddings, pad_value=np.nan, min_steps=2)
+
+def stats(name, A):
+    A = np.asarray(A)
+    finite = np.isfinite(A)
+    print(f"{name}: shape={A.shape} dtype={A.dtype}")
+    print(f"  finite: {finite.mean()*100:.2f}%  (nan={np.isnan(A).sum()}, inf={(~finite & ~np.isnan(A)).sum()})")
+    if finite.any():
+        Af = A[finite]
+        print(f"  min={Af.min():.3g} max={Af.max():.3g} mean={Af.mean():.3g} std={Af.std():.3g}")
+        print(f"  absmax={np.max(np.abs(Af)):.3g}")
+
+print(dboed_df.shape)
+print(boed_df.shape)
