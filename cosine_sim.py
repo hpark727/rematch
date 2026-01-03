@@ -6,6 +6,8 @@ import seaborn as sns
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+
 
 def load_data(belief_index_path, belief_signal_index_path):
     # Load JSONs
@@ -44,7 +46,7 @@ boed = df.groupby("agent_type").get_group("BOEDSCOTUSJudgmentPredictionAgent").c
 print('DBOED shape:', dboed.shape)
 print('BOED shape:', boed.shape)
 
-def build_trajectory_map(df, step_col="step_number", vec_row_col="signal_row"):
+def build_trajectory_map(df, step_col="step_index", vec_row_col="signal_row"):
     if vec_row_col not in df.columns:
         raise ValueError(f"{vec_row_col} not in df columns. Available: {df.columns.tolist()}")
 
@@ -145,7 +147,7 @@ def trajectory_adj_cos_sequences(trajectory_map, embeddings, pad_value=np.nan, m
 
 # histogram plotting function
 def plot_adj_cos_histogram(seq_df, agent_type, bins=50):
-    adj_cos_values = dboed_df.values.flatten()
+    adj_cos_values = dboed.values.flatten()
     adj_cos_values = adj_cos_values[~np.isnan(adj_cos_values)]
 
     plt.figure(figsize=(8, 5))
@@ -172,10 +174,6 @@ def plot_adj_cos_tsne(seq_df, agent_type, perplexity, n_components=2, random_sta
     plt.grid(True)
     plt.show()
 
-
-dboed_df = trajectory_adj_cos_sequences(traj_map_dboed, vector_embeddings, pad_value=np.nan, min_steps=2)
-boed_df = trajectory_adj_cos_sequences(traj_map_boed,   vector_embeddings, pad_value=np.nan, min_steps=2)
-
 def stats(name, A):
     A = np.asarray(A)
     finite = np.isfinite(A)
@@ -186,5 +184,77 @@ def stats(name, A):
         print(f"  min={Af.min():.3g} max={Af.max():.3g} mean={Af.mean():.3g} std={Af.std():.3g}")
         print(f"  absmax={np.max(np.abs(Af)):.3g}")
 
-print(dboed_df.shape)
-print(boed_df.shape)
+# modify dboed trajectory map to separate by belief type
+dboed_design_map = {}
+dboed_task_map = {}
+
+for tid, step_rows in traj_map_dboed.items():
+    tid = str(tid)
+    dboed_design_map[tid] = []
+    dboed_task_map[tid] = []
+
+    for idx in step_rows:
+        bt = df.loc[idx, "belief_type"]
+        if bt == "design_beliefs":
+            dboed_design_map[tid].append(idx)
+        elif bt == "task_beliefs":
+            dboed_task_map[tid].append(idx)
+        else:
+            print("Unexpected belief_type:", tid, idx, bt)
+
+print('dboed_design_map size:', len(dboed_design_map))
+print('dboed_task_map size:', len(dboed_task_map))
+
+# check that the design map indices correspond to design beliefs
+check = True
+for tid, idx_list in dboed_design_map.items():
+    for idx in idx_list:
+        if df.loc[idx, "belief_type"] != "design_beliefs":  
+            check = False
+            print("Mismatch in design_map:", tid, idx, df.loc[idx, "belief_type"])
+            break
+    if not check:
+        break
+
+if not check:
+    print("Error: design map contains non-design belief!")
+else:
+    print("Design map check passed.")
+
+# check that the task map indices correspond to task beliefs
+check = True
+for tid, idx_list in dboed_task_map.items():
+    for idx in idx_list:
+        if df.loc[idx, "belief_type"] != "task_beliefs":  
+            check = False
+            print("Mismatch in task_map:", tid, idx, df.loc[idx, "belief_type"])
+            break
+    if not check:
+        break
+
+if not check:
+    print("Error: task map contains non-task belief!")
+else:
+    print("Task map check passed.")
+
+dboed_design_sim = trajectory_adj_cos_sequences(dboed_design_map, vector_embeddings, pad_value=np.nan, min_steps=2)
+dboed_task_sim   = trajectory_adj_cos_sequences(dboed_task_map,   vector_embeddings, pad_value=np.nan, min_steps=2)
+dboed_df = trajectory_adj_cos_sequences(traj_map_dboed, vector_embeddings, pad_value=np.nan, min_steps=2)
+boed_df = trajectory_adj_cos_sequences(traj_map_boed,   vector_embeddings, pad_value=np.nan, min_steps=2)
+
+from stats_and_plots import CosineRunAnalyzer as sp
+
+an = sp(dboed_design_sim, dboed_task_sim, boed_df)
+an.plot_overlay_time_series_mean_std(
+    {
+        "DBOED Design": dboed_design_sim,
+        "DBOED Task": dboed_task_sim,
+        "BOED": boed_df,
+    },
+    title="Adjacent cosine similarity over time (mean ± 1σ)",
+    show_band=True,
+    band_alpha=0.20,
+    clip_y=(0.9, 1.0),   # optional zoom; tweak/remove as needed
+)
+an.show(block=True)
+
