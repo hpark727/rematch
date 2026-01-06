@@ -6,8 +6,11 @@ import seaborn as sns
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-import matplotlib.pyplot as plt
-
+from sklearn.model_selection import LeaveOneOut, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report, confusion_matrix
 
 def load_data(belief_index_path, belief_signal_index_path):
     # Load JSONs
@@ -157,23 +160,7 @@ def plot_adj_cos_histogram(seq_df, agent_type, bins=50):
     plt.ylabel('Frequency')
     plt.grid(True)
     plt.show()
-
-# t-SNE plotting function
-def plot_adj_cos_tsne(seq_df, agent_type, perplexity, n_components=2, random_state=42):
-    adj_cos_values = seq_df.values
-    adj_cos_values = np.nan_to_num(adj_cos_values, nan=0.0)
-
-    tsne = TSNE(n_components=n_components, perplexity=perplexity, random_state=random_state)
-    tsne_results = tsne.fit_transform(adj_cos_values)
-
-    plt.figure(figsize=(8, 5))
-    plt.scatter(tsne_results[:, 0], tsne_results[:, 1], alpha=0.6)
-    plt.title(f't-SNE of Adjacency Cosine Similarities for {agent_type}')
-    plt.xlabel('t-SNE Dimension 1')
-    plt.ylabel('t-SNE Dimension 2')
-    plt.grid(True)
-    plt.show()
-
+    
 def stats(name, A):
     A = np.asarray(A)
     finite = np.isfinite(A)
@@ -251,10 +238,131 @@ an.plot_overlay_time_series_mean_std(
         "DBOED Task": dboed_task_sim,
         "BOED": boed_df,
     },
-    title="Adjacent cosine similarity over time (mean ± 1σ)",
+    title="Adjacent cosine similarity over time (mean ± 1 st. dev.)",
     show_band=True,
     band_alpha=0.20,
     clip_y=(0.9, 1.0),   # optional zoom; tweak/remove as needed
 )
 an.show(block=True)
 
+# Classification with RBF-SVM and LOOCV
+
+dboed_design_sim['agent_type'] = 'DBOED_Design'
+dboed_task_sim['agent_type']   = 'DBOED_Task'
+boed_df['agent_type']          = 'BOED'
+
+combined = pd.concat([dboed_design_sim, dboed_task_sim, boed_df], axis=0)
+print('combined shape' , combined.shape)
+
+X = combined.drop(columns=['agent_type']).to_numpy()
+
+row_means = np.nanmean(X, axis=0)
+inds = np.where(np.isnan(X))
+X[inds] = np.take(row_means, inds[1])
+
+y = combined['agent_type'].to_numpy()
+
+loo = LeaveOneOut()
+
+pipe = Pipeline([
+    ("scaler", StandardScaler()),
+    ("clf", SVC(kernel="rbf", C=1.0, gamma="scale", probability=False))
+])
+
+y_pred = cross_val_predict(pipe, X, y, cv=loo)
+
+print(confusion_matrix(y, y_pred))
+print(classification_report(y, y_pred, digits=3))
+
+
+# Deep Learning Binary Classifier with LOOCV
+# from sklearn.impute import SimpleImputer
+# from sklearn.neural_network import MLPClassifier
+# from sklearn.preprocessing import LabelEncoder
+
+# dboed_design_sim["agent_type"] = "DBOED"
+# dboed_task_sim["agent_type"]   = "DBOED"
+# boed_df["agent_type"]          = "BOED"
+
+# combined = pd.concat([dboed_design_sim, dboed_task_sim, boed_df], axis=0).reset_index(drop=True)
+
+# X = combined.drop(columns=["agent_type"]).to_numpy()
+# y = combined["agent_type"].to_numpy()
+
+# X = X.astype(np.float64, copy=False)
+
+# le = LabelEncoder()
+# y_enc = le.fit_transform(y)   # e.g., BOED->0, DBOED->1 (order depends on le.classes_)
+
+# loo = LeaveOneOut()
+
+# pipe = Pipeline([
+#     ("imputer", SimpleImputer(strategy="mean")),
+#     ("scaler", StandardScaler()),
+#     ("clf", MLPClassifier(
+#         hidden_layer_sizes=(64, 32),
+#         activation="relu",
+#         solver="adam",
+#         alpha=1e-4,
+#         learning_rate_init=1e-3,
+#         max_iter=2000,
+#         early_stopping=True,      
+#         n_iter_no_change=20,
+#         random_state=42
+#     ))
+# ])
+
+# y_pred_enc = cross_val_predict(pipe, X, y_enc, cv=loo)
+
+# y_pred = le.inverse_transform(y_pred_enc)
+# y_true = le.inverse_transform(y_enc)
+
+# print(confusion_matrix(y_true, y_pred, labels=["DBOED", "BOED"]))
+# print(classification_report(y_true, y_pred, digits=3))
+
+# Permutation test for significance
+import numpy as np
+
+from sklearn.model_selection import LeaveOneOut, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.svm import SVC
+
+def permutation_test_loocv_accuracy(X, y, n_perms=500, random_state=0, estimator=None):
+    X = np.asarray(X)
+    y = np.asarray(y)
+
+    if estimator is None:
+        raise ValueError("Pass your Pipeline as estimator=...")
+
+    loo = LeaveOneOut()
+
+    # Observed
+    y_pred = cross_val_predict(estimator, X, y, cv=loo)
+    obs_acc = (y_pred == y).mean()
+
+    rng = np.random.default_rng(random_state)
+    perm_accs = np.empty(n_perms, dtype=float)
+
+    for b in range(n_perms):
+        print(f"Permutation {b+1}/{n_perms}", end="\r")
+
+        y_perm = rng.permutation(y)
+        y_perm_pred = cross_val_predict(estimator, X, y_perm, cv=loo)
+        perm_accs[b] = (y_perm_pred == y_perm).mean()
+
+    p_value = (1.0 + np.sum(perm_accs >= obs_acc)) / (n_perms + 1.0)
+    return obs_acc, perm_accs, p_value
+
+
+obs_acc, perm_accs, p = permutation_test_loocv_accuracy(
+    X, y, n_perms=2000, random_state=0, estimator=pipe
+)
+
+print("\n--- Permutation test ---")
+print(f"Observed LOOCV accuracy: {obs_acc:.3f}")
+print(f"Permutation mean accuracy: {perm_accs.mean():.3f} (std={perm_accs.std():.3f})")
+print(f"Empirical one-sided p-value: {p:.6f}")
+print("Perm acc quantiles [50%, 90%, 95%, 99%]:",
+      np.round(np.quantile(perm_accs, [0.50, 0.90, 0.95, 0.99]), 3))
