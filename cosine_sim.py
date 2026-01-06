@@ -29,13 +29,11 @@ def load_data(belief_index_path, belief_signal_index_path):
     df_b["llm_row"] = np.arange(len(df_b))
     df_bs["signal_row"] = np.arange(len(df_bs))
 
-    # Keep only what you want from the signal side to avoid duplicate columns
     sig_cols = ["belief_id", "signal_row"]
-    for c in ["text"]:  # include if it exists in df_bs
+    for c in ["text"]:  
         if c in df_bs.columns:
             sig_cols.append(c)
 
-    # Merge on belief_id (real join)
     main = df_b.merge(df_bs[sig_cols], on="belief_id", how="left")
 
     print(main.shape)
@@ -49,6 +47,7 @@ boed = df.groupby("agent_type").get_group("BOEDSCOTUSJudgmentPredictionAgent").c
 print('DBOED shape:', dboed.shape)
 print('BOED shape:', boed.shape)
 
+# method to build trajectory map
 def build_trajectory_map(df, step_col="step_index", vec_row_col="signal_row"):
     if vec_row_col not in df.columns:
         raise ValueError(f"{vec_row_col} not in df columns. Available: {df.columns.tolist()}")
@@ -102,7 +101,7 @@ def l2_normalize(A, axis=1, eps=1e-10):
 
 norm = l2_normalize(vector_embeddings, axis=1)
 
-print('norm shape:', norm.shape)
+# print('norm shape:', norm.shape)
 
 def cos(A, B):
     return cosine_similarity(A, B)
@@ -129,8 +128,6 @@ def trajectory_adj_cos_sequences(trajectory_map, embeddings, pad_value=np.nan, m
         idxs = np.asarray(idxs, dtype=int)
         if len(idxs) < min_steps:
             continue
-        if np.any((idxs < 0) | (idxs >= n_rows)):
-            raise IndexError(f"Trajectory {tid} has out-of-range indices.")
         V = Xn[idxs]
         adj = np.sum(V[:-1] * V[1:], axis=1)  # length T-1
         seqs[tid] = adj
@@ -161,6 +158,7 @@ def plot_adj_cos_histogram(seq_df, agent_type, bins=50):
     plt.grid(True)
     plt.show()
     
+# stats function (ai generated)    
 def stats(name, A):
     A = np.asarray(A)
     finite = np.isfinite(A)
@@ -231,6 +229,7 @@ boed_df = trajectory_adj_cos_sequences(traj_map_boed,   vector_embeddings, pad_v
 
 from stats_and_plots import CosineRunAnalyzer as sp
 
+# plot graph
 an = sp(dboed_design_sim, dboed_task_sim, boed_df)
 an.plot_overlay_time_series_mean_std(
     {
@@ -241,7 +240,7 @@ an.plot_overlay_time_series_mean_std(
     title="Adjacent cosine similarity over time (mean ± 1 st. dev.)",
     show_band=True,
     band_alpha=0.20,
-    clip_y=(0.9, 1.0),   # optional zoom; tweak/remove as needed
+    clip_y=(0.9, 1.0),  
 )
 an.show(block=True)
 
@@ -321,13 +320,6 @@ print(classification_report(y, y_pred, digits=3))
 # print(classification_report(y_true, y_pred, digits=3))
 
 # Permutation test for significance
-import numpy as np
-
-from sklearn.model_selection import LeaveOneOut, cross_val_predict
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
-from sklearn.svm import SVC
 
 def permutation_test_loocv_accuracy(X, y, n_perms=500, random_state=0, estimator=None):
     X = np.asarray(X)
